@@ -6,7 +6,7 @@ import { cacheStats } from './utils/cache';
 import { resolveEmbed } from './resolvers/megacloud';
 
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
-import { getAnikotoEpisodes, getAnikotoEpisodesById, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
+import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getMegaPlayStream } from './scrapers/megaplay';
 import { getDesidubEpisodes, getDesidubServers, getDesidubStream } from './scrapers/desidub';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getAllEpisodes as getAllMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml, MalEpisode } from './scrapers/mal';
@@ -209,55 +209,6 @@ router.get('/episodes', async (req: Request, res: Response) => {
   }
 });
 
-// Direct Anikoto lookup. Unlike /servers, this route accepts the site's
-// own numeric anime ID or watch slug and never invokes MAL/AniList mapping.
-router.get('/servers/v2', async (req: Request, res: Response) => {
-  const rawId = req.query.anikotoId ?? req.query.id ?? req.query.slug;
-  const anikotoId = typeof rawId === 'string' ? rawId.trim() : '';
-  const epRaw = typeof req.query.ep === 'string' ? req.query.ep : '';
-  const type = typeof req.query.type === 'string' ? req.query.type : 'sub';
-
-  if (!anikotoId) return res.status(400).json({ error: 'Provide ?anikotoId= with an Anikoto numeric ID or watch slug' });
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(anikotoId)) {
-    return res.status(400).json({ error: 'anikotoId must be a numeric ID or Anikoto watch slug' });
-  }
-  if (!epRaw) return res.status(400).json({ error: 'Missing ?ep=' });
-  const epNum = Number(epRaw);
-  if (!Number.isInteger(epNum) || epNum < 1) return res.status(400).json({ error: '?ep must be a positive integer' });
-  if (!['sub', 'dub', 'raw', 'all'].includes(type)) {
-    return res.status(400).json({ error: 'type must be: sub, dub, raw, all' });
-  }
-
-  try {
-    const episodes = await getAnikotoEpisodesById(anikotoId);
-    const episode = episodes.find((item) => Math.round(item.num) === epNum);
-    if (!episode) {
-      return res.status(404).json({ error: `Episode ${epNum} not found on Anikoto`, animeId: anikotoId });
-    }
-
-    const allServers = await getAnikotoServers(episode.id);
-    const servers = type === 'all' ? allServers : allServers.filter((server) => server.type === type);
-    return res.json({
-      animeId: anikotoId,
-      siteId: anikotoId,
-      episode: epNum,
-      type,
-      source: 'anikoto',
-      servers: servers.map((server) => ({
-        name: server.name,
-        sourceId: server.sourceId,
-        type: server.type,
-      })),
-    });
-  } catch (error: any) {
-    return res.status(502).json({
-      error: 'Direct Anikoto server lookup failed',
-      detail: error?.message || String(error),
-      animeId: anikotoId,
-    });
-  }
-});
-
 router.get('/servers', async (req: Request, res: Response) => {
   const { anilistId, malId, ep, type = 'sub', source = 'anikoto', heavenId, providerAnimeId, episodeId, episodeSession } = req.query;
   if (!ep) return res.status(400).json({ error: 'Missing ?ep=' });
@@ -299,9 +250,8 @@ router.get('/servers', async (req: Request, res: Response) => {
   }
 });
 
-async function watchHandler(req: Request, res: Response, directAnikotoId?: string) {
-  const source = directAnikotoId ? 'anikoto' : req.params.source;
-  const id = directAnikotoId || req.params.id;
+async function watchHandler(req: Request, res: Response) {
+  const { source, id, ep, type } = req.params;
   const { ep, type } = req.params;
   const preferredServer = req.query.server as string | undefined;
   const heavenOverride = req.query.heavenId as string | undefined;
@@ -311,17 +261,14 @@ async function watchHandler(req: Request, res: Response, directAnikotoId?: strin
   if (isNaN(epNum)) return res.status(400).json({ error: 'ep must be a number' });
   if (!['sub', 'dub', 'raw'].includes(type)) return res.status(400).json({ error: 'type must be: sub, dub, raw' });
 
-  const directAnikoto = source === 'anikoto' && Boolean(directAnikotoId);
   const directHeavenId = source === 'animeheaven' && !id.startsWith('mal-') && !/^\d+$/.test(id);
   const anilistId = directHeavenId || id.startsWith('mal-') ? undefined : id;
   const malId = id.startsWith('mal-') ? id.replace('mal-', '') : undefined;
 
   try {
-    const siteIds = directAnikoto
-      ? { anilistId: null, malId: null, title: null, siteIds: { anikoto: directAnikotoId } }
-      : directHeavenId
-        ? { anilistId: null, malId: null, title: null, siteIds: { animeheaven: id } }
-        : await resolveSiteIds(anilistId, malId);
+    const siteIds = directHeavenId
+      ? { anilistId: null, malId: null, title: null, siteIds: { animeheaven: id } }
+      : await resolveSiteIds(anilistId, malId);
     if (!siteIds) return res.status(404).json({ error: 'Could not resolve anime' });
 
     if (source === 'megaplay') {
@@ -348,9 +295,7 @@ async function watchHandler(req: Request, res: Response, directAnikotoId?: strin
       });
     }
 
-    const epResult = directAnikoto
-      ? { episodes: await getAnikotoEpisodesById(directAnikotoId as string), siteId: directAnikotoId as string, error: undefined }
-      : await fetchEpisodes(source as Source, siteIds, { heavenId: heavenOverride });
+    const epResult = await fetchEpisodes(source as Source, siteIds, { heavenId: heavenOverride });
     if (epResult.error) return res.status(404).json({ error: epResult.error });
 
     const episode = epResult.episodes.find((e: any) => Math.round(e.num) === epNum);
@@ -511,9 +456,6 @@ async function watchHandler(req: Request, res: Response, directAnikotoId?: strin
 }
 
 router.get('/watch/:source/:id/:ep/:type', watchHandler);
-router.get('/watch/v2/anikoto/:anikotoId/:ep/:type', (req: Request, res: Response) =>
-  watchHandler(req, res, req.params.anikotoId)
-);
 
 router.get('/proxy/hls', async (req: Request, res: Response) => {
   const url = req.query.url as string | undefined;
