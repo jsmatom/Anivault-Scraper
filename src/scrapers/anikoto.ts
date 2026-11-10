@@ -16,7 +16,7 @@ import { cacheGet, cacheSet } from '../utils/cache';
 //     regular server list, that points at a CDN not behind bot-protection.
 // ══════════════════════════════════════════════════════════════
 
-const BASE = 'https://anikoto.to';
+const BASE = 'https://anikoto.net';
 const http = makeClient(BASE, BASE + '/');
 const ajax = makeAjaxClient(BASE, BASE + '/');
 
@@ -214,7 +214,6 @@ interface RawEpisode {
   dataIds?: string;
   dataMal?: string;
   dataTimestamp?: string;
-  slug?: string;
 }
 
 async function fetchRawEpisodes(slug: string): Promise<RawEpisode[]> {
@@ -275,60 +274,6 @@ export async function getAnikotoEpisodes(slug: string): Promise<AnikotoEpisode[]
     id: `${slug}::${ep.num}::${ep.dataIds ?? ''}::${ep.dataMal ?? ''}::${ep.dataTimestamp ?? ''}`,
     title: ep.title,
   }));
-}
-
-// Resolve episodes from Anikoto's own numeric anime ID without first resolving
-// a MAL/AniList title. The ID is the data-id attached to #watch-main and is
-// accepted directly by Anikoto's /ajax/episode/list/:id endpoint.
-export async function getAnikotoEpisodesById(idOrSlug: string): Promise<AnikotoEpisode[]> {
-  const identifier = String(idOrSlug || '').trim();
-  if (!identifier) return [];
-  if (!/^\d+$/.test(identifier)) return getAnikotoEpisodes(identifier);
-
-  const cacheKey = `anikoto:eps:id:${identifier}`;
-  const cached = cacheGet<AnikotoEpisode[]>(cacheKey);
-  if (cached) return cached;
-
-  const response = await ajax.get(`/ajax/episode/list/${encodeURIComponent(identifier)}`);
-  const html = response.data?.result || '';
-  if (typeof html !== 'string' || !html.trim()) return [];
-
-  const $ = cheerio.load(html);
-  const episodes: RawEpisode[] = [];
-  $('#w-episodes ul.ep-range li a, ul.ep-range li a, #w-episodes a[href], a[href], a[data-num]').each((_, el) => {
-    const $el = $(el);
-    const href = $el.attr('href') ?? '';
-    if (!href.includes('/watch/') && !$el.attr('data-num')) return;
-
-    const epNumRaw =
-      $el.attr('data-num') || $el.find('.number, .d-title, span').first().text().trim() || href.split('/ep-')[1] || '';
-    const num = parseFloat(epNumRaw);
-    if (!Number.isFinite(num)) return;
-
-    const slug = href.match(/\/watch\/([^/?#]+)/)?.[1] || identifier;
-    episodes.push({
-      num,
-      title: $el.attr('title')?.trim() || `Episode ${epNumRaw}`,
-      dataIds: $el.attr('data-ids') ?? $el.attr('data-id') ?? undefined,
-      dataMal: $el.attr('data-mal') ?? undefined,
-      dataTimestamp: $el.attr('data-timestamp') ?? undefined,
-      // Keep the canonical watch slug so the existing server/watch resolver
-      // can construct the correct episode referer even when lookup began by ID.
-      slug,
-    });
-  });
-
-  const unique = Array.from(new Map(episodes.map((ep) => [ep.num, ep])).values()).sort((a, b) => a.num - b.num);
-  const result = unique.map((ep) => {
-    const slug = ep.slug || identifier;
-    return {
-      num: ep.num,
-      id: `${slug}::${ep.num}::${ep.dataIds ?? ''}::${ep.dataMal ?? ''}::${ep.dataTimestamp ?? ''}`,
-      title: ep.title,
-    };
-  });
-  if (result.length) cacheSet(cacheKey, result, 'episodes');
-  return result;
 }
 
 // ══════════════════════════════════════════════════════════════
