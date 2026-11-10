@@ -119,27 +119,6 @@ GET /api/servers?malId=20899&ep=1&type=sub&source=megaplay
 → { anilistId, malId, title, episode, type, source, servers[] }
 ```
 
-#### `GET /api/servers/v2` (direct Anikoto ID/slug)
-List Anikoto servers without resolving a MAL/AniList ID or searching by title.
-Pass the numeric Anikoto `data-id` from `#watch-main`, or an existing Anikoto
-watch slug. Numeric IDs are read directly through Anikoto's episode-list AJAX
-endpoint; slugs use the normal watch-page flow.
-
-| Param | Required | Notes |
-|---|---|---|
-| `anikotoId` | **yes** | Anikoto numeric anime ID or watch slug. `id` and `slug` are accepted aliases. |
-| `ep` | **yes** | Episode number |
-| `type` | no | `sub` \| `dub` \| `raw` \| `all` (default `sub`) |
-
-```
-GET /api/servers/v2?anikotoId=12345&ep=1&type=sub
-GET /api/servers/v2?anikotoId=tensei-shitara-slime-datta-ken-2nd-season-part-2&ep=1&type=dub
-→ { animeId, siteId, episode, type, source: 'anikoto', servers[] }
-```
-
-The response keeps the same `servers[]` fields as v1 (`name`, `sourceId`,
-`type`), so clients can consume it without a title/ID mapping step.
-
 #### `GET /api/watch/:source/:id/:ep/:type`
 Resolve a real, playable stream for an episode — the main playback endpoint.
 | Path param | Notes |
@@ -167,13 +146,6 @@ URL dynamically.
 
 ```
 GET /api/watch?source=anikoto&anilistId=20&ep=1&type=sub
-```
-
-Direct Anikoto playback is also available without AniList/MAL mapping:
-
-```
-GET /api/watch/v2/anikoto/12345/1/sub
-GET /api/watch/v2/anikoto/tensei-shitara-slime-datta-ken-2nd-season-part-2/1/dub
 ```
 
 #### `GET /api/proxy/hls?url=&ref=`
